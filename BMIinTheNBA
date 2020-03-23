@@ -1,0 +1,260 @@
+
+library(dplyr)
+library(readr)
+library(tidyr)
+library(lubridate)
+library(data.table)
+library(measurements)
+library(Hmisc)  
+
+# data munging the dataset came from Kaggle https://www.kaggle.com/drgilermo/nba-players-stats
+player_data <- read_csv("Documents/RData/player_data.csv")
+View(player_data)
+
+# College info not useful for this inquiry.
+player_data$college <- NULL
+
+# Created a column for length of career which is created by subtracting year started from year end
+player_data$career <- player_data$year_end - player_data$year_start
+
+# Converted birth date to a useable year. 
+player_data$birth_date <- as.Date(player_data$birth_date, "%B %d, %Y")
+
+# Turned player position data into factors. 
+player_data$position <- as.factor(as.character(player_data$position))
+
+
+# Calculating BMI. Added on a row what includes BMI for each player. 
+player_data <- separate(data = player_data, col = height, into = c("feet", "inches"), sep = "-")
+player_data$feet <- as.numeric(as.character(player_data$feet))
+player_data$inches = as.numeric(as.character(player_data$inches))
+player_data$totInches = ((player_data$feet *12) + (player_data$inches))
+player_data$BMI = ((player_data$weight) / (player_data$totInches * player_data$totInches)* 703)
+
+#Defining success metric. Players should complete 9 years to be considered successful. 
+# Players starting after 2012 are discounted because they could not have played 9 years.
+player_data2 <- player_data[which (player_data$year_end < 2012), ]
+player_career_success <- player_data2$career > 9
+player_data2$success <- player_career_success * 1
+
+# Defining success over mean career
+player_career_mean <- mean(player_data2$career)
+player_career_mean
+# [1] 3.998352
+player_data2$aboveMean <- (player_data2$career > player_career_mean) *1
+
+#removing NAs in BMI
+player_data3 <- player_data2 %>% drop_na("BMI")
+player_data3 %>% print(n = nrow(player_data3))
+
+
+# Linear regression doesn't seem to add up to much statistically. On the surface, nothing
+# statistically significant. 
+plot(player_data2$career ~ player_data2$BMI)
+playerlm <- lm(player_data2$success ~ player_data2$year_start + player_data2$BMI + player_data2$weight + player_data2$totInches)
+summary(playerlm)$coefficient
+
+
+# Let's take a look at isolating what a successful player would be. I'm defining this as 
+# a 9-year career. That's over twice the mean career length. No matter what position
+# or how many teams a player has played for, or how many points a player has scored, 
+# anyone playing 9 years in the NBA should to be considered a successful player. 
+successPlayers <- player_data2[which(player_data2$career > 9),] 
+
+# And let's look at their BMI. 
+mean(successPlayers$BMI)
+# [1] 23.79074
+
+# Which is again, not really stastically significant from all players in the database. 
+mean(player_data3$BMI)
+# [1] 23.8985
+
+
+# I looked at a histogram of the player data. 
+hist(player_data3$BMI)
+hist(player_data2$career)
+
+# It's interesting that the tail on the plus side of the BMI
+# drops off dramatically. Maybe the question is being overweight
+# in the NBA. Let's take the mean BMI of a player who has played for
+# 9 years and call that the ideal BMI and remove the players below that BMI. 
+
+player_data3$overBMI <- (player_data3$BMI - 23.79)
+player_data4 <- player_data3[which(player_data3$overBMI > 0),] 
+
+hist(player_data4$overBMI)
+
+
+# This looks like a linear regression withs some outliers. 
+plot(player_data4$career ~ player_data4$overBMI)
+lm(player_data4$career ~ player_data4$overBMI)
+
+# Let's look at an LM with the new data: 
+NBACareerModel <- lm(player_data4$career ~ player_data4$overBMI)
+summary(NBACareerModel)
+
+plot(player_data4$career, player_data4$overBMI, pch = 1, col="blue", 
+     main= "Career length relationship to BMI", xlab = "BMI", ylab = "Career")
+abline(lm(player_data4$career ~ player_data4$overBMI))
+
+# Residual standard error: 4.269 on 1641 degrees of freedom
+# Multiple R-squared:  0.001769,	Adjusted R-squared:  0.001161 
+# F-statistic: 2.908 on 1 and 1641 DF,  p-value: 0.08832
+
+
+# It's a line, but the r-squared method shows that it's not statistically
+# significant. Looked for a way to compare the career length to segments in
+# the BMI data. I took 7 cuts to see if a pattern revealed itself. 
+
+player_data3$BMICut <- cut2(player_data3$BMI,g=7)    
+plot(player_data3$BMICut,player_data3$career, main= "Career Length vs. 7 segments of BMI")
+
+boxplot(player_data3$career ~ player_data3$BMICut) 
+
+aovCareerBMI <- aov(player_data3$career ~ player_data3$BMICut)
+summary(aovCareerBMI)
+
+# It's almost a completely consistent slice across all segments of BMI. Really interesting. I would have to conclude
+# that without further data, this relationship is just not there. BMI looks to have almost no relationship to career length
+# in the NBA. I did notice the next highest relationship in the data was to year start. Let's look at that. 
+# I cut year started into 10 segments and plotted that against the career length. 
+
+player_data3$YSCut <- cut2 (player_data3$year_start, g=10)
+boxplot(player_data3$career ~ player_data3$YSCut, main="Career Length vs. Year Start", xlab="Year Start", ylab="Career Length")
+plot(player_data4$career, player_data4$overBMI, pch = 1, col="blue", 
+     main= "Career length relationship to BMI", xlab = "BMI", ylab = "Career")
+CareerYearStart <- (player_data3$career ~ player_data3$YSCut)
+summary (aov(CareerYearStart))
+
+YearStartLM <- lm(player_data3$career ~ player_data3$YSCut)
+
+summary(YearStartLM)
+# Call:
+#   lm(formula = player_data3$career ~ player_data3$YSCut)
+# 
+# Residuals:
+#   Min     1Q Median     3Q    Max 
+# -5.608 -3.437 -1.104  3.067 16.555 
+# 
+# Coefficients:
+#   Estimate Std. Error t value Pr(>|t|)    
+# (Intercept)                     1.6553     0.2067   8.008 1.56e-15 ***
+#   player_data3$YSCut[1951,1963)   1.4482     0.3079   4.703 2.66e-06 ***
+#   player_data3$YSCut[1963,1970)   2.2777     0.2940   7.748 1.20e-14 ***
+#   player_data3$YSCut[1970,1974)   1.9600     0.3113   6.296 3.41e-10 ***
+#   player_data3$YSCut[1974,1980)   2.7820     0.3029   9.183  < 2e-16 ***
+#   player_data3$YSCut[1980,1986)   3.7897     0.2999  12.637  < 2e-16 ***
+#   player_data3$YSCut[1986,1991)   3.9528     0.3069  12.878  < 2e-16 ***
+#   player_data3$YSCut[1991,1997)   3.9386     0.2947  13.364  < 2e-16 ***
+#   player_data3$YSCut[1997,2003)   3.1910     0.3062  10.421  < 2e-16 ***
+#   player_data3$YSCut[2003,2012]   0.1618     0.3077   0.526    0.599    
+# ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# Residual standard error: 4.196 on 3625 degrees of freedom
+# Multiple R-squared:  0.1013,	Adjusted R-squared:  0.09908 
+# F-statistic: 45.41 on 9 and 3625 DF,  p-value: < 2.2e-16
+
+# Something interesting is happening here. It seems that from the mid-70s to the present day, 
+# average career length has grown a bit. This could be explained with better medical procedures
+# and knowledge of nutrition and training. 
+
+#Let's see if kmeans analysis reveals patterns we can't see. We have to convert all
+# metrics to numbers that can be reasonably scaled. We want to look at the era in which a 
+# player started. To do this, let's subtract the year that the database started recording: 1947. 
+# So a player starting in 1947 will be considered to start at year "0" and a player starting
+# in 1957 will be considered to start at year "10".
+
+player_data5 <- player_data3
+player_data5$YS <- (player_data5$year_start - 1947)
+player_data5
+
+#Here we'll elmiminate the columns we can't use or aren't useful. 
+player_data5$name <- NULL
+player_data5$year_start<-NULL
+player_data5$year_end<-NULL
+player_data5$position<-NULL
+player_data5$feet<-NULL
+player_data5$inches<-NULL
+player_data5$weight<-NULL
+player_data5$birth_date<-NULL
+player_data5$overBMI<-NULL
+player_data5$aboveMean<-NULL
+player_data5$BMICut<-NULL
+player_data5$YSCut<-NULL
+player_data5$success<-NULL
+
+# The result is this: Career meaning the length of years played, totInches wich is height
+# in inches, BMI is body mass index, and YS is years starting at 1947. 
+
+player_data5
+# career totInches   BMI    YS
+# <dbl>     <dbl> <dbl> <dbl>
+#   1      4        82  25.1    44
+# 2      9        81  25.2    22
+# 3     19        86  21.4    23
+# 4     10        73  21.4    44
+# 5      5        78  25.8    51
+# 6     11        81  24.1    50
+# 7      4        79  24.8    30
+
+#Scale the data: 
+ScaledPlayer_data5 <- scale(player_data5)
+ScaledPlayer_data5
+
+#Plot using kmeans. 
+SPD <- kmeans(player_data5, centers=4)
+SPD 
+
+# The resulting SS is promising. 
+# Within cluster sum of squares by cluster:
+#   [1] 61115.68 52393.19 40539.29 24417.47
+# (between_SS / total_SS =  85.4 %)
+
+#Let's plot the cluster. 
+str(SPD)
+plot(player_data5, col=SPD$cluster)
+
+
+# Choosing the number of clusters which best represents the data. 
+k <- list()
+for(i in 1:10){
+  k[[i]]<-kmeans(ScaledPlayer_data5, i)
+}
+
+k
+
+#Let's create a plot that shows the usefulness of more groups. 
+betweenss_totss <-list()
+for(i in 1:10){
+  betweenss_totss[[i]] <- k[[i]]$betweenss/k[[i]]$totss
+}
+
+plot(1:10, betweenss_totss, type = "b", ylab="BetweenSS/TotalSS", xlab="Clusters(k)")
+
+for(i in 1:5){
+  plot(player_data5, col = k[[i]]$cluster)
+}
+
+# Four seems to be the best fit for the data. 
+# 
+# There is an odd shear in the data in YS as it relates to present day players because
+# they are being counted, but their careers are not complete. This creates an anomaly. 
+# 
+# More modern players have a population of players with larger BMIs. 
+# 
+# Players who started later have a better chance at a longer career
+# 
+# The kmeans data seems to suggest that there are fewer players with 14+ year careers
+# with a high BMI. 
+# 
+# And lastly, it looks like early players, as a group, were not as tall as the players who
+# came after them. 
+
+#Thanks for looking!
+
+
+
+
+
+
